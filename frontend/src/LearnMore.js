@@ -13,6 +13,8 @@ export default function LearnMore() {
         document.getElementById('sentiment-section')?.scrollIntoView({ behavior: 'smooth' });
       } else if (section === 'trending') {
         document.getElementById('trending-section')?.scrollIntoView({ behavior: 'smooth' });
+      } else if (section === 'faq') {
+        document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
       }
     }, 100);
   };
@@ -54,7 +56,7 @@ export default function LearnMore() {
                 <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('top')}>Dashboard</button></li>
                 <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('sentiment')}>Sentiment Analysis</button></li>
                 <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('trending')}>Trending Topics</button></li>
-                <li><a href="#faq">FAQ</a></li>
+                <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('faq')}>FAQ</button></li>
               </ul>
             </div>
             <div className="footer-section">

@@ -351,7 +351,7 @@ function App() {
           </section>
 
           {/* FAQ Section */}
-          <section className="faq-section">
+          <section className="faq-section" id="faq">
             <div className="faq-container">
               <h2>Frequently Asked Questions</h2>
               <div className="faq-list">
@@ -449,7 +449,16 @@ function App() {
                         }, 100);
                       }
                     }}>Trending Topics</button></li>
-                    <li><a href="#faq">FAQ</a></li>
+                    <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => {
+                      if (window.location.pathname === '/') {
+                        document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
+                      } else {
+                        navigate('/');
+                        setTimeout(() => {
+                          document.getElementById('faq')?.scrollIntoView({ behavior: 'smooth' });
+                        }, 100);
+                      }
+                    }}>FAQ</button></li>
                   </ul>
                 </div>
                 <div className="footer-section">
