@@ -1,6 +1,21 @@
 import React from "react";
+import { useNavigate } from 'react-router-dom';
 
 export default function LearnMore() {
+  const navigate = useNavigate();
+  // Helper to scroll after navigation
+  const scrollToSection = (section) => {
+    navigate('/');
+    setTimeout(() => {
+      if (section === 'top') {
+        document.querySelector('.dashboard-root')?.scrollIntoView({ behavior: 'smooth' });
+      } else if (section === 'sentiment') {
+        document.getElementById('sentiment-section')?.scrollIntoView({ behavior: 'smooth' });
+      } else if (section === 'trending') {
+        document.getElementById('trending-section')?.scrollIntoView({ behavior: 'smooth' });
+      }
+    }, 100);
+  };
   return (
     <>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", background: "#f7fafc", padding: "2rem" }}>
@@ -36,17 +51,17 @@ export default function LearnMore() {
             <div className="footer-section">
               <h4>Quick Links</h4>
               <ul>
-                <li><a href="#dashboard">Dashboard</a></li>
-                <li><a href="#sentiment">Sentiment Analysis</a></li>
-                <li><a href="#trends">Trending Topics</a></li>
+                <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('top')}>Dashboard</button></li>
+                <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('sentiment')}>Sentiment Analysis</button></li>
+                <li><button style={{background:'none',border:'none',color:'#cbd5e1',cursor:'pointer',padding:0}} onClick={() => scrollToSection('trending')}>Trending Topics</button></li>
                 <li><a href="#faq">FAQ</a></li>
               </ul>
             </div>
             <div className="footer-section">
               <h4>Contact</h4>
               <ul>
-                <li><a href="mailto:contact@newsanalysis.com">contact@newsanalysis.com</a></li>
-                <li><a href="https://github.com/yourusername" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+                <li><a href="mailto:tarik.coralic@stu.ibu.edu.ba">tarik.coralic@stu.ibu.edu.ba</a></li>
+                <li><a href="https://github.com/tarik2808/news-analysis-dashboard" target="_blank" rel="noopener noreferrer">GitHub</a></li>
                 <li><a href="https://linkedin.com/in/yourusername" target="_blank" rel="noopener noreferrer">LinkedIn</a></li>
               </ul>
             </div>
