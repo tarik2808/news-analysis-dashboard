@@ -131,6 +131,24 @@ function App() {
     }));
   };
 
+  const prepareSentimentBySourceData = () => {
+    if (!newsData?.articles) return [];
+    const sourceSentiments = {};
+    const sourceCounts = {};
+
+    newsData.articles.forEach(article => {
+      const source = article.source || 'Unknown';
+      const polarity = article.sentiment_polarity || 0;
+      sourceSentiments[source] = (sourceSentiments[source] || 0) + polarity;
+      sourceCounts[source] = (sourceCounts[source] || 0) + 1;
+    });
+
+    return Object.keys(sourceSentiments).map(source => ({
+      source,
+      avgSentiment: sourceCounts[source] ? sourceSentiments[source] / sourceCounts[source] : 0
+    }));
+  };
+
   const prepareTrendingKeywords = () => {
     if (!trendsData?.top_keywords) {
       console.log('[DEBUG] No trendsData or top_keywords found:', trendsData);
@@ -162,6 +180,9 @@ function App() {
               <h1>Spot trends. Analyze news. Instantly.</h1>
               <p>Welcome to your all-in-one news analysis dashboard. Dive into real-time insights, track emerging stories, and visualize trends from top sources. Whether you're a data enthusiast, journalist, or researcher, discover smarter ways to explore the news—together.</p>
               <div className="hero-buttons">
+                {loading && (
+                  <div className="loading-spinner"></div>
+                )}
                 <button 
                   className="primary-btn" 
                   onClick={runFullPipeline}
@@ -260,6 +281,20 @@ function App() {
                         <YAxis />
                         <Tooltip />
                         <Bar dataKey="count" fill="#2563eb" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Average Sentiment by Source */}
+                  <div className="chart-card">
+                    <h3>Average Sentiment by Source</h3>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <BarChart data={prepareSentimentBySourceData()}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="source" />
+                        <YAxis domain={[-1, 1]} />
+                        <Tooltip />
+                        <Bar dataKey="avgSentiment" fill="#f59e42" />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
