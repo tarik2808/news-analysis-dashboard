@@ -1,5 +1,5 @@
 import axios from 'axios';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Route, Routes, useNavigate } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './App.css';
@@ -26,11 +26,15 @@ function App() {
     return stored ? JSON.parse(stored) : false;
   });
   const [scrapingStatus, setScrapingStatus] = useState('');
+  const [donationAmount, setDonationAmount] = useState('');
+  const [donationStatus, setDonationStatus] = useState('');
+  const [donationLoading, setDonationLoading] = useState(false);
   const navigate = useNavigate();
   const chartsRef = useRef(null);
   const topRef = useRef(null);
   const sentimentRef = useRef(null);
   const trendingRef = useRef(null);
+  const sepoliaAddress = '0x7a4E9CC12FA0F11e89E9cE164707947F97d2E0F5';
 
   // Persist state to localStorage whenever it changes
   useEffect(() => {
@@ -167,6 +171,43 @@ function App() {
     
     return keywordData;
   };
+
+  // MetaMask donation handler
+  const handleDonate = useCallback(async () => {
+    setDonationStatus('');
+    if (!window.ethereum) {
+      setDonationStatus('MetaMask is not installed.');
+      return;
+    }
+    if (!donationAmount || isNaN(donationAmount) || Number(donationAmount) <= 0) {
+      setDonationStatus('Please enter a valid amount.');
+      return;
+    }
+    setDonationLoading(true);
+    try {
+      // Request account access if needed
+      await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+      const from = accounts[0];
+      // Convert ETH to Wei
+      const value = parseInt((Number(donationAmount) * 1e18).toString(), 10).toString(16);
+      // Send transaction
+      await window.ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from,
+          to: sepoliaAddress,
+          value: '0x' + value,
+          chainId: '0xaa36a7' // Sepolia chainId in hex
+        }]
+      });
+      setDonationStatus('Thank you for your donation!');
+      setDonationAmount('');
+    } catch (err) {
+      setDonationStatus('Transaction failed or cancelled.');
+    }
+    setDonationLoading(false);
+  }, [donationAmount]);
 
   return (
     <Routes>
@@ -443,7 +484,47 @@ function App() {
             </div>
           </section>
 
-          {/* Footer */}
+          {/* Footer Donation Section */}
+          <div className="donation-section">
+            <img src={process.env.PUBLIC_URL + '/MetaMask-icon-fox-developer.svg'} alt="MetaMask" className="metamask-logo" />
+            <h2>Support Our Project</h2>
+            <p>
+              Currently, this website is <b>free to use</b> because we are in beta. You can help us keep it free by donating SepoliaETH (testnet) using MetaMask.<br/>
+              <span style={{color:'#2563eb'}}>Donations help us cover costs and improve the platform!</span>
+            </p>
+            <div className="donation-form">
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                placeholder="Amount (SepoliaETH)"
+                value={donationAmount}
+                onChange={e => setDonationAmount(e.target.value)}
+                disabled={donationLoading}
+              />
+              <button
+                className="primary-btn"
+                onClick={handleDonate}
+                disabled={donationLoading}
+              >
+                {donationLoading ? 'Processing...' : 'Donate Now'}
+              </button>
+            </div>
+            {donationStatus && (
+              <div className={`donation-status${donationStatus.includes('Thank you') ? ' donation-success' : ''}${donationStatus.includes('MetaMask') ? ' donation-error' : ''}`}>
+                {donationStatus.includes('MetaMask')
+                  ? (donationStatus.includes('not installed')
+                      ? 'You need MetaMask to make a donation.'
+                      : 'Failed to connect to MetaMask.')
+                  : donationStatus}
+              </div>
+            )}
+            <div className="donation-note">
+              <b>Note:</b> Only SepoliaETH (testnet) is accepted. No real ETH is used.
+            </div>
+          </div>
+
+          {/* Main Footer Section */}
           <footer className="dashboard-footer">
             <div className="footer-container">
               <div className="footer-content">

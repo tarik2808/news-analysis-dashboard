@@ -183,4 +183,7 @@ ai_images/
 
 # Backup files
 *.bak
-*.backup 
+*.backup
+
+# Allow MetaMask logo SVG in public folder
+!frontend/public/MetaMask-icon-fox-developer.svg 
