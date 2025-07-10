@@ -34,7 +34,9 @@ function App() {
   const topRef = useRef(null);
   const sentimentRef = useRef(null);
   const trendingRef = useRef(null);
+  const donationRef = useRef(null);
   const sepoliaAddress = '0x7a4E9CC12FA0F11e89E9cE164707947F97d2E0F5';
+  const [timeRange, setTimeRange] = useState('today');
 
   // Persist state to localStorage whenever it changes
   useEffect(() => {
@@ -209,6 +211,56 @@ function App() {
     setDonationLoading(false);
   }, [donationAmount]);
 
+  // Fetch snapshot based on time range
+  const fetchSnapshot = useCallback(async (range) => {
+    setLoading(true);
+    setError(null);
+    let url = '';
+    const today = new Date();
+    
+    if (range === 'today') {
+      const year = today.getFullYear();
+      const month = (today.getMonth() + 1).toString().padStart(2, '0');
+      const day = today.getDate().toString().padStart(2, '0');
+      url = `${API_BASE_URL}/snapshots/day/${year}-${month}-${day}`;
+    } else if (range === 'week') {
+      const year = today.getFullYear();
+      const week = Math.ceil(((today - new Date(today.getFullYear(),0,1)) / 86400000 + new Date(today.getFullYear(),0,1).getDay()+1)/7);
+      url = `${API_BASE_URL}/snapshots/week/${year}-${week.toString().padStart(2, '0')}`;
+    } else if (range === 'month') {
+      const year = today.getFullYear();
+      const month = (today.getMonth() + 1).toString().padStart(2, '0');
+      url = `${API_BASE_URL}/snapshots/month/${year}-${month}`;
+    }
+    try {
+      const response = await axios.get(url, { timeout: 10000 }); // 10s timeout
+      setNewsData({ message: response.data.message, articles: response.data.articles || [] });
+      setTrendsData({
+        top_keywords: response.data.top_keywords,
+        source_trends: response.data.source_trends,
+        temporal_trends: response.data.temporal_trends
+      });
+      setShowCharts(true);
+      setError(null);
+    } catch (err) {
+      if (err.code === 'ECONNABORTED') {
+        setError('The request timed out. Please try again later.');
+      } else if (err.response && err.response.status === 404) {
+        setError('No data available for this period. Please run the analysis on more days to see historical trends.');
+      } else {
+        setError('An error occurred while fetching data.');
+      }
+      setShowCharts(false);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Fetch snapshot when timeRange changes
+  useEffect(() => {
+    fetchSnapshot(timeRange);
+  }, [timeRange]);
+
   return (
     <Routes>
       <Route path="/" element={
@@ -280,6 +332,13 @@ function App() {
               <button onClick={() => setError(null)}>Dismiss</button>
             </div>
           )}
+
+          {/* Time Range Selector */}
+          <div className="time-range-selector">
+            <button className={timeRange === 'today' ? 'active' : ''} onClick={() => setTimeRange('today')}>Today</button>
+            <button className={timeRange === 'week' ? 'active' : ''} onClick={() => setTimeRange('week')}>Last 7 Days</button>
+            <button className={timeRange === 'month' ? 'active' : ''} onClick={() => setTimeRange('month')}>Last 30 Days</button>
+          </div>
 
           {/* Data Visualization Section */}
           {showCharts && newsData && (
@@ -426,6 +485,25 @@ function App() {
             </div>
           </section>
 
+          {/* Donate CTA Section */}
+          <section className="donate-cta-section">
+            <div className="donate-cta-container">
+              <img src={process.env.PUBLIC_URL + '/donate_eth.avif'} alt="Donate ETH" className="donate-cta-image" />
+              <div className="donate-cta-content">
+                <h2>Support Us with a Donation</h2>
+                <p>If you like this project and want to help us keep it free, consider making a donation. Every bit helps us improve and maintain the platform!</p>
+                <button
+                  className="primary-btn"
+                  onClick={() => {
+                    donationRef.current?.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                >
+                  Make a Donation
+                </button>
+              </div>
+            </div>
+          </section>
+
           {/* FAQ Section */}
           <section className="faq-section" id="faq">
             <div className="faq-container">
@@ -485,7 +563,7 @@ function App() {
           </section>
 
           {/* Footer Donation Section */}
-          <div className="donation-section">
+          <div className="donation-section" ref={donationRef}>
             <img src={process.env.PUBLIC_URL + '/MetaMask-icon-fox-developer.svg'} alt="MetaMask" className="metamask-logo" />
             <h2>Support Our Project</h2>
             <p>
