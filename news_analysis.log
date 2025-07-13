@@ -1,0 +1,249 @@
+2025-06-19 10:40:11,984 - INFO - Created output directories
+2025-06-19 10:40:23,805 - INFO - Starting news scraping...
+2025-06-19 10:40:40,365 - INFO - Scraped 5 articles
+2025-06-19 10:40:40,366 - INFO - Processing article text...
+2025-06-19 10:40:40,373 - ERROR - An error occurred: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - 'C:\\Users\\DT User/nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\share\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\lib\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Roaming\\nltk_data'
+    - 'C:\\nltk_data'
+    - 'D:\\nltk_data'
+    - 'E:\\nltk_data'
+**********************************************************************
+Traceback (most recent call last):
+  File "C:\Users\DT User\Desktop\SDP Project\main_simple.py", line 46, in main
+    processed_df = processor.process_dataframe(articles_df)
+  File "C:\Users\DT User\Desktop\SDP Project\text_processor.py", line 77, in process_dataframe
+    processed_df['processed_text'] = processed_df['text'].apply(self.process_article)
+                                     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\series.py", line 4935, in apply
+    ).apply()
+      ~~~~~^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\apply.py", line 1422, in apply
+    return self.apply_standard()
+           ~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\apply.py", line 1502, in apply_standard
+    mapped = obj._map_values(
+        mapper=curried, na_action=action, convert=self.convert_dtype
+    )
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\base.py", line 925, in _map_values
+    return algorithms.map_array(arr, mapper, na_action=na_action, convert=convert)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\algorithms.py", line 1743, in map_array
+    return lib.map_infer(values, mapper, convert=convert)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "pandas/_libs/lib.pyx", line 2999, in pandas._libs.lib.map_infer
+  File "C:\Users\DT User\Desktop\SDP Project\text_processor.py", line 67, in process_article
+    text_without_stopwords = self.remove_stopwords(cleaned_text)
+  File "C:\Users\DT User\Desktop\SDP Project\text_processor.py", line 54, in remove_stopwords
+    word_tokens = word_tokenize(text)
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tokenize\__init__.py", line 142, in word_tokenize
+    sentences = [text] if preserve_line else sent_tokenize(text, language)
+                                             ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tokenize\__init__.py", line 119, in sent_tokenize
+    tokenizer = _get_punkt_tokenizer(language)
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tokenize\__init__.py", line 105, in _get_punkt_tokenizer
+    return PunktTokenizer(language)
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tokenize\punkt.py", line 1744, in __init__
+    self.load_lang(lang)
+    ~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tokenize\punkt.py", line 1749, in load_lang
+    lang_dir = find(f"tokenizers/punkt_tab/{lang}/")
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93mpunkt_tab[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('punkt_tab')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtokenizers/punkt_tab/english/[0m
+
+  Searched in:
+    - 'C:\\Users\\DT User/nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\share\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\lib\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Roaming\\nltk_data'
+    - 'C:\\nltk_data'
+    - 'D:\\nltk_data'
+    - 'E:\\nltk_data'
+**********************************************************************
+
+2025-06-19 10:41:12,276 - INFO - Created output directories
+2025-06-19 10:41:12,503 - INFO - Starting news scraping...
+2025-06-19 10:41:29,041 - INFO - Scraped 5 articles
+2025-06-19 10:41:29,042 - INFO - Processing article text...
+2025-06-19 10:41:32,987 - INFO - Text processing completed
+2025-06-19 10:41:32,988 - INFO - Performing NLP analysis...
+2025-06-19 10:41:32,992 - ERROR - An error occurred: 
+**********************************************************************
+  Resource [93maveraged_perceptron_tagger_eng[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('averaged_perceptron_tagger_eng')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtaggers/averaged_perceptron_tagger_eng/[0m
+
+  Searched in:
+    - 'C:\\Users\\DT User/nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\share\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\lib\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Roaming\\nltk_data'
+    - 'C:\\nltk_data'
+    - 'D:\\nltk_data'
+    - 'E:\\nltk_data'
+**********************************************************************
+Traceback (most recent call last):
+  File "C:\Users\DT User\Desktop\SDP Project\main_simple.py", line 51, in main
+    analyzed_df = analyzer.analyze_dataframe(processed_df)
+  File "C:\Users\DT User\Desktop\SDP Project\nlp_analyzer_simple.py", line 108, in analyze_dataframe
+    analyzed_df['keywords'] = analyzed_df['processed_text'].apply(self.extract_keywords)
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\series.py", line 4935, in apply
+    ).apply()
+      ~~~~~^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\apply.py", line 1422, in apply
+    return self.apply_standard()
+           ~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\apply.py", line 1502, in apply_standard
+    mapped = obj._map_values(
+        mapper=curried, na_action=action, convert=self.convert_dtype
+    )
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\base.py", line 925, in _map_values
+    return algorithms.map_array(arr, mapper, na_action=na_action, convert=convert)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\algorithms.py", line 1743, in map_array
+    return lib.map_infer(values, mapper, convert=convert)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "pandas/_libs/lib.pyx", line 2999, in pandas._libs.lib.map_infer
+  File "C:\Users\DT User\Desktop\SDP Project\nlp_analyzer_simple.py", line 37, in extract_keywords
+    pos_tags = pos_tag(tokens)
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tag\__init__.py", line 168, in pos_tag
+    tagger = _get_tagger(lang)
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tag\__init__.py", line 110, in _get_tagger
+    tagger = PerceptronTagger()
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tag\perceptron.py", line 183, in __init__
+    self.load_from_json(lang)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\tag\perceptron.py", line 273, in load_from_json
+    loc = find(f"taggers/averaged_perceptron_tagger_{lang}/")
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\nltk\data.py", line 579, in find
+    raise LookupError(resource_not_found)
+LookupError: 
+**********************************************************************
+  Resource [93maveraged_perceptron_tagger_eng[0m not found.
+  Please use the NLTK Downloader to obtain the resource:
+
+  [31m>>> import nltk
+  >>> nltk.download('averaged_perceptron_tagger_eng')
+  [0m
+  For more information see: https://www.nltk.org/data.html
+
+  Attempted to load [93mtaggers/averaged_perceptron_tagger_eng/[0m
+
+  Searched in:
+    - 'C:\\Users\\DT User/nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\share\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Local\\Programs\\Python\\Python313\\lib\\nltk_data'
+    - 'C:\\Users\\DT User\\AppData\\Roaming\\nltk_data'
+    - 'C:\\nltk_data'
+    - 'D:\\nltk_data'
+    - 'E:\\nltk_data'
+**********************************************************************
+
+2025-06-19 10:42:15,334 - INFO - Created output directories
+2025-06-19 10:42:15,535 - INFO - Starting news scraping...
+2025-06-19 10:42:30,763 - INFO - Scraped 5 articles
+2025-06-19 10:42:30,767 - INFO - Processing article text...
+2025-06-19 10:42:34,762 - INFO - Text processing completed
+2025-06-19 10:42:34,763 - INFO - Performing NLP analysis...
+2025-06-19 10:42:35,497 - INFO - NLP analysis completed
+2025-06-19 10:42:35,497 - INFO - Analyzing trends...
+2025-06-19 10:42:35,501 - ERROR - An error occurred: Cannot mix tz-aware with tz-naive values, at position 1
+Traceback (most recent call last):
+  File "C:\Users\DT User\Desktop\SDP Project\main_simple.py", line 56, in main
+    trends = trend_analyzer.analyze_trends(analyzed_df)
+  File "C:\Users\DT User\Desktop\SDP Project\trend_analyzer.py", line 110, in analyze_trends
+    self.trends['temporal'] = self.analyze_temporal_trends(df)
+                              ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^
+  File "C:\Users\DT User\Desktop\SDP Project\trend_analyzer.py", line 29, in analyze_temporal_trends
+    df['date'] = pd.to_datetime(df['date'])
+                 ~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\tools\datetimes.py", line 1072, in to_datetime
+    values = convert_listlike(arg._values, format)
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\tools\datetimes.py", line 437, in _convert_listlike_datetimes
+    result, tz_parsed = objects_to_datetime64(
+                        ~~~~~~~~~~~~~~~~~~~~~^
+        arg,
+        ^^^^
+    ...<4 lines>...
+        allow_object=True,
+        ^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\DT User\AppData\Local\Programs\Python\Python313\Lib\site-packages\pandas\core\arrays\datetimes.py", line 2415, in objects_to_datetime64
+    result, tz_parsed = tslib.array_to_datetime(
+                        ~~~~~~~~~~~~~~~~~~~~~~~^
+        data,
+        ^^^^^
+    ...<4 lines>...
+        creso=abbrev_to_npy_unit(out_unit),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "pandas/_libs/tslib.pyx", line 412, in pandas._libs.tslib.array_to_datetime
+  File "pandas/_libs/tslib.pyx", line 596, in pandas._libs.tslib.array_to_datetime
+  File "pandas/_libs/tslib.pyx", line 504, in pandas._libs.tslib.array_to_datetime
+  File "pandas/_libs/tslibs/strptime.pyx", line 292, in pandas._libs.tslibs.strptime.DatetimeParseState.process_datetime
+ValueError: Cannot mix tz-aware with tz-naive values, at position 1
+2025-06-19 10:43:23,967 - INFO - Created output directories
+2025-06-19 10:43:24,174 - INFO - Starting news scraping...
+2025-06-19 10:43:37,626 - INFO - Scraped 5 articles
+2025-06-19 10:43:37,627 - INFO - Processing article text...
+2025-06-19 10:43:41,675 - INFO - Text processing completed
+2025-06-19 10:43:41,676 - INFO - Performing NLP analysis...
+2025-06-19 10:43:42,325 - INFO - NLP analysis completed
+2025-06-19 10:43:42,326 - INFO - Analyzing trends...
+2025-06-19 10:43:46,271 - INFO - Trend analysis completed
+2025-06-19 11:27:59,610 - INFO - Created output directories
+2025-06-19 11:27:59,815 - INFO - Starting news scraping...
+2025-06-19 11:28:28,341 - INFO - Scraped 10 articles
+2025-06-19 11:28:28,342 - INFO - Processing article text...
+2025-06-19 11:28:32,437 - INFO - Text processing completed
+2025-06-19 11:28:32,438 - INFO - Performing NLP analysis...
+2025-06-19 11:28:33,226 - INFO - NLP analysis completed
+2025-06-19 11:28:33,228 - INFO - Analyzing trends...
+2025-06-19 11:28:35,832 - INFO - Trend analysis completed
+2025-06-24 18:47:04,480 - INFO - Created output directories
+2025-06-24 18:47:04,749 - INFO - Starting news scraping...
+2025-06-24 18:47:45,391 - INFO - Scraped 15 articles
+2025-06-24 18:47:45,392 - INFO - Processing article text...
+2025-06-24 18:47:49,722 - INFO - Text processing completed
+2025-06-24 18:47:49,722 - INFO - Performing NLP analysis...
+2025-06-24 18:47:51,058 - INFO - NLP analysis completed
+2025-06-24 18:47:51,058 - INFO - Analyzing trends...
+2025-06-24 18:47:54,072 - INFO - Trend analysis completed
