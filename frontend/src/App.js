@@ -1,7 +1,7 @@
 import axios from 'axios';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Route, Routes, useNavigate } from 'react-router-dom';
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts';
 import './App.css';
 import LearnMore from './LearnMore';
 import NewsletterSignup from './NewsletterSignup';
@@ -32,6 +32,7 @@ function App() {
   const [donationAmount, setDonationAmount] = useState('');
   const [donationStatus, setDonationStatus] = useState('');
   const [donationLoading, setDonationLoading] = useState(false);
+  const [articlesPerSource, setArticlesPerSource] = useState(10);
   const navigate = useNavigate();
   const chartsRef = useRef(null);
   const topRef = useRef(null);
@@ -63,7 +64,7 @@ function App() {
     setLoadingProgress(0);
     setLoadingStep('');
     setError(null);
-    setScrapingStatus('Running full analysis pipeline...');
+    setScrapingStatus(`Running full analysis pipeline (${articlesPerSource} articles per source)...`);
     
     try {
       // Use the streaming endpoint for real-time progress
@@ -73,7 +74,7 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          articles_per_source: 10
+          articles_per_source: articlesPerSource
         })
       });
 
@@ -83,24 +84,43 @@ function App() {
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
       let result = null;
+      let allArticles = [];
+      let metadata = null;
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // Keep the last incomplete line in buffer
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
-              const data = JSON.parse(line.slice(6));
+              const jsonStr = line.slice(6).trim();
+              if (!jsonStr) continue; // Skip empty lines
+              
+              const data = JSON.parse(jsonStr);
               
               if (data.status === 'running') {
                 setLoadingStep(data.step);
                 setLoadingProgress(data.progress);
                 setScrapingStatus(data.step);
+                
+                // Handle metadata
+                if (data.metadata) {
+                  metadata = data.metadata;
+                }
+                
+                // Handle article chunks
+                if (data.articles_chunk) {
+                  allArticles = allArticles.concat(data.articles_chunk);
+                  console.log(`Received ${allArticles.length} articles so far...`);
+                }
+                
               } else if (data.status === 'completed') {
                 result = data.result;
                 setLoadingStep('Pipeline completed!');
@@ -111,10 +131,15 @@ function App() {
               }
             } catch (parseError) {
               console.warn('Failed to parse progress data:', parseError);
+              console.warn('Problematic line length:', line.length);
+              console.warn('Line preview:', line.slice(0, 100) + '...');
+              
               // If it's a JSON parsing error, it might be due to timestamp issues
-              // Try to continue with the pipeline
+              // or truncated data. Try to continue with the pipeline
               if (parseError.message.includes('Timestamp')) {
                 console.warn('Timestamp serialization issue detected, continuing...');
+              } else if (parseError.message.includes('Unterminated string')) {
+                console.warn('JSON truncation detected, this might be due to large data payload');
               }
             }
           }
@@ -124,13 +149,26 @@ function App() {
       if (result) {
         // Set the data from the completed pipeline
         setNewsData({
-          message: result.message,
-          articles: result.articles || []
+            message: result.message,
+            articles: result.articles || []
         });
         setTrendsData({
-          top_keywords: result.top_keywords,
-          source_trends: result.source_trends,
-          temporal_trends: result.temporal_trends
+            top_keywords: result.top_keywords,
+            source_trends: result.source_trends,
+            temporal_trends: result.temporal_trends
+        });
+        setShowCharts(true);
+      } else if (metadata && allArticles.length > 0) {
+        // Use chunked data if available
+        console.log(`Using chunked data: ${allArticles.length} articles`);
+        setNewsData({
+            message: metadata.message,
+            articles: allArticles
+        });
+        setTrendsData({
+            top_keywords: metadata.top_keywords,
+            source_trends: metadata.source_trends,
+            temporal_trends: metadata.temporal_trends
         });
         setShowCharts(true);
       } else {
@@ -274,6 +312,61 @@ function App() {
     return keywordSentimentData;
   };
 
+  const prepareTemporalTrendsData = () => {
+    if (!newsData?.articles) {
+      return [];
+    }
+    
+    // Group articles by hour of the day
+    const hourlyData = {};
+    
+    newsData.articles.forEach(article => {
+      try {
+        const articleDate = new Date(article.date);
+        const hour = articleDate.getHours();
+        const hourKey = `${hour.toString().padStart(2, '0')}:00`;
+        
+        if (!hourlyData[hourKey]) {
+          hourlyData[hourKey] = {
+            time: hourKey,
+            hour: hour,
+            articles: 0,
+            totalSentiment: 0,
+            avgSentiment: 0,
+            positive: 0,
+            negative: 0,
+            neutral: 0
+          };
+        }
+        
+        const sentiment = article.sentiment_polarity || 0;
+        hourlyData[hourKey].articles += 1;
+        hourlyData[hourKey].totalSentiment += sentiment;
+        
+        // Categorize sentiment
+        if (sentiment > 0.1) {
+          hourlyData[hourKey].positive += 1;
+        } else if (sentiment < -0.1) {
+          hourlyData[hourKey].negative += 1;
+        } else {
+          hourlyData[hourKey].neutral += 1;
+        }
+      } catch (error) {
+        console.warn('Error parsing date:', article.date, error);
+      }
+    });
+    
+    // Calculate average sentiment and convert to array
+    const temporalData = Object.values(hourlyData)
+      .map(data => ({
+        ...data,
+        avgSentiment: data.articles > 0 ? data.totalSentiment / data.articles : 0
+      }))
+      .sort((a, b) => a.hour - b.hour);
+    
+    return temporalData;
+  };
+
   // MetaMask donation handler
   const handleDonate = useCallback(async () => {
     setDonationStatus('');
@@ -386,6 +479,33 @@ function App() {
             <div className="hero-content">
               <h1>Spot trends. Analyze news. Instantly.</h1>
               <p>Welcome to your all-in-one news analysis dashboard. Dive into real-time insights, track emerging stories, and visualize trends from top sources. Whether you're a data enthusiast, journalist, or researcher, discover smarter ways to explore the news—together.</p>
+              {/* Article Count Selector */}
+              <div className="article-selector">
+                <label htmlFor="articlesPerSource" className="selector-label">
+                  Articles per source:
+                </label>
+                <div className="selector-container">
+                  <input
+                    type="range"
+                    id="articlesPerSource"
+                    min="5"
+                    max="30"
+                    value={articlesPerSource}
+                    onChange={(e) => setArticlesPerSource(parseInt(e.target.value))}
+                    className="article-slider"
+                    disabled={loading}
+                  />
+                  <div className="selector-display">
+                    <span className="current-value">{articlesPerSource}</span>
+                    <span className="selector-text">articles per source</span>
+                  </div>
+                </div>
+                <div className="selector-range">
+                  <span>5</span>
+                  <span>30</span>
+                </div>
+              </div>
+
               <div className="hero-buttons">
                 <button 
                   className="primary-btn" 
@@ -684,6 +804,88 @@ function App() {
                         />
                         <Bar dataKey="avgSentiment" fill="#f59e42" />
                       </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Temporal Trends */}
+                  <div className="chart-card">
+                    <h3>Temporal Trends</h3>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={prepareTemporalTrendsData()}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="time" 
+                          label={{ value: 'Time of Day', position: 'insideBottom', offset: -5 }}
+                        />
+                        <YAxis 
+                          domain={[-1, 1]}
+                          label={{ value: 'Average Sentiment', angle: -90, position: 'insideLeft' }}
+                        />
+                        <Tooltip 
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div style={{
+                                  backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                                  border: '3px solid #f59e42',
+                                  borderRadius: '12px',
+                                  padding: '16px',
+                                  boxShadow: '0 8px 25px rgba(0, 0, 0, 0.4)',
+                                  color: 'white',
+                                  fontSize: '14px',
+                                  fontWeight: '500',
+                                  minWidth: '220px'
+                                }}>
+                                  <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    marginBottom: '8px',
+                                    fontWeight: '600',
+                                    fontSize: '16px'
+                                  }}>
+                                    <div style={{
+                                      width: '12px',
+                                      height: '12px',
+                                      backgroundColor: '#f59e42',
+                                      borderRadius: '50%',
+                                      marginRight: '8px'
+                                    }}></div>
+                                    {data.time} - News Sentiment
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Articles: <strong>{data.articles}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Avg Sentiment: <strong>{data.avgSentiment.toFixed(3)}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Positive: <strong style={{ color: '#10b981' }}>{data.positive}</strong> | 
+                                    Negative: <strong style={{ color: '#ef4444' }}>{data.negative}</strong> | 
+                                    Neutral: <strong style={{ color: '#6b7280' }}>{data.neutral}</strong>
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: '12px', 
+                                    color: '#d1d5db',
+                                    fontStyle: 'italic'
+                                  }}>
+                                    📈 Sentiment trend at {data.time}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="avgSentiment" 
+                          stroke="#f59e42" 
+                          strokeWidth={3}
+                          dot={{ fill: '#f59e42', strokeWidth: 2, r: 4 }}
+                          activeDot={{ r: 6, stroke: '#f59e42', strokeWidth: 2 }}
+                        />
+                      </LineChart>
                     </ResponsiveContainer>
                   </div>
 

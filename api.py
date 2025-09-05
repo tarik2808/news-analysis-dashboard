@@ -308,6 +308,33 @@ def full_pipeline_stream(req: ScrapeRequest):
             # Convert all timestamps in the result
             result = convert_timestamps(result)
             
+            # Split the result into smaller chunks to avoid JSON truncation
+            # Send metadata first
+            metadata = {
+                "message": result["message"],
+                "top_keywords": result["top_keywords"],
+                "source_trends": result["source_trends"],
+                "temporal_trends": result["temporal_trends"],
+                "plot_files": result["plot_files"],
+                "article_count": len(result["articles"])
+            }
+            
+            yield f"data: {json.dumps({'step': 'Finalizing results...', 'progress': 98, 'status': 'running'})}\n\n"
+            
+            # Send metadata first
+            yield f"data: {json.dumps({'step': 'Sending analysis results...', 'progress': 99, 'status': 'running', 'metadata': metadata})}\n\n"
+            
+            # Send articles in smaller chunks
+            articles = result["articles"]
+            chunk_size = 10  # Send 10 articles at a time
+            for i in range(0, len(articles), chunk_size):
+                chunk = articles[i:i + chunk_size]
+                yield f"data: {json.dumps({'step': f'Sending articles {i+1}-{min(i+chunk_size, len(articles))}...', 'progress': 99, 'status': 'running', 'articles_chunk': chunk})}\n\n"
+                time.sleep(0.01)  # Small delay between chunks
+            
+            # Send final completion with all data
+            yield f"data: {json.dumps({'step': 'Pipeline completed!', 'progress': 100, 'status': 'completed', 'result': result})}\n\n"
+            
             # Save snapshot to database
             db = SessionLocal()
             try:
