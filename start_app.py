@@ -31,8 +31,10 @@ def start_frontend():
     try:
         # Change to frontend directory and start React
         frontend_dir = Path(__file__).parent / "frontend"
+        # Use full path to npm since it's not in PATH
+        npm_path = r"C:\Program Files\nodejs\npm.cmd"
         frontend_process = subprocess.Popen([
-            "npm", "start"
+            npm_path, "start"
         ], cwd=frontend_dir)
         return frontend_process
     except Exception as e:

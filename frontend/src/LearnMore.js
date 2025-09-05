@@ -1,5 +1,6 @@
 import React from "react";
 import { useNavigate } from 'react-router-dom';
+import NewsletterSignup from './NewsletterSignup';
 
 export default function LearnMore() {
   const navigate = useNavigate();
@@ -42,6 +43,8 @@ export default function LearnMore() {
           <img src="/learnabout.png" alt="Learn More" style={{ width: '100%', maxWidth: 480, height: 'auto', borderRadius: 16, boxShadow: '0 2px 12px rgba(0,0,0,0.04)', background: '#e5e7eb', objectFit: 'contain' }} />
         </div>
       </div>
+      {/* Newsletter Signup Section */}
+      <NewsletterSignup />
       {/* Footer copied from dashboard */}
       <div className="dashboard-footer">
         <div className="footer-container">

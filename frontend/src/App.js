@@ -1,9 +1,10 @@
 import axios from 'axios';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Route, Routes, useNavigate } from 'react-router-dom';
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis } from 'recharts';
 import './App.css';
 import LearnMore from './LearnMore';
+import NewsletterSignup from './NewsletterSignup';
 
 // API Configuration
 const API_BASE_URL = 'http://localhost:8000';
@@ -12,6 +13,8 @@ function App() {
   // State management
   const [activeFAQ, setActiveFAQ] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState(null);
   const [newsData, setNewsData] = useState(() => {
     const stored = localStorage.getItem('newsData');
@@ -38,11 +41,6 @@ function App() {
   const sepoliaAddress = '0x7a4E9CC12FA0F11e89E9cE164707947F97d2E0F5';
   const [timeRange, setTimeRange] = useState('today');
 
-  // Add state for newsletter
-  const [newsletterEmail, setNewsletterEmail] = useState('');
-  const [newsletterStatus, setNewsletterStatus] = useState('');
-  const [newsletterStatusType, setNewsletterStatusType] = useState(''); // 'success', 'error', 'info'
-
   // Persist state to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem('newsData', JSON.stringify(newsData));
@@ -62,26 +60,82 @@ function App() {
   // Backend API calls
   const runFullPipeline = async () => {
     setLoading(true);
+    setLoadingProgress(0);
+    setLoadingStep('');
     setError(null);
     setScrapingStatus('Running full analysis pipeline...');
     
     try {
-      const response = await axios.post(`${API_BASE_URL}/full_pipeline`, {
-        articles_per_source: 10
+      // Use the streaming endpoint for real-time progress
+      const response = await fetch(`${API_BASE_URL}/full_pipeline_stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          articles_per_source: 10
+        })
       });
-      
-      // Set the data from the full pipeline response
-      setNewsData({
-        message: response.data.message,
-        articles: response.data.articles || []
-      });
-      setTrendsData({
-        top_keywords: response.data.top_keywords,
-        source_trends: response.data.source_trends,
-        temporal_trends: response.data.temporal_trends
-      });
-      setShowCharts(true);
-      setScrapingStatus(`Pipeline completed! ${response.data.message}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let result = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.status === 'running') {
+                setLoadingStep(data.step);
+                setLoadingProgress(data.progress);
+                setScrapingStatus(data.step);
+              } else if (data.status === 'completed') {
+                result = data.result;
+                setLoadingStep('Pipeline completed!');
+                setLoadingProgress(100);
+                setScrapingStatus(`Pipeline completed! ${result.message}`);
+              } else if (data.status === 'error') {
+                throw new Error(data.error || 'Pipeline failed');
+              }
+            } catch (parseError) {
+              console.warn('Failed to parse progress data:', parseError);
+              // If it's a JSON parsing error, it might be due to timestamp issues
+              // Try to continue with the pipeline
+              if (parseError.message.includes('Timestamp')) {
+                console.warn('Timestamp serialization issue detected, continuing...');
+              }
+            }
+          }
+        }
+      }
+
+      if (result) {
+        // Set the data from the completed pipeline
+        setNewsData({
+          message: result.message,
+          articles: result.articles || []
+        });
+        setTrendsData({
+          top_keywords: result.top_keywords,
+          source_trends: result.source_trends,
+          temporal_trends: result.temporal_trends
+        });
+        setShowCharts(true);
+      } else {
+        throw new Error('No result received from pipeline');
+      }
       
     } catch (err) {
       setError('Failed to run analysis pipeline. Please try again.');
@@ -89,6 +143,8 @@ function App() {
       console.error('Pipeline error:', err);
     } finally {
       setLoading(false);
+      setLoadingProgress(0);
+      setLoadingStep('');
     }
   };
 
@@ -179,6 +235,45 @@ function App() {
     return keywordData;
   };
 
+  const prepareKeywordSentimentData = () => {
+    if (!newsData?.articles || !trendsData?.top_keywords) {
+      return [];
+    }
+    
+    // Get top keywords
+    const topKeywords = Object.keys(trendsData.top_keywords).slice(0, 15);
+    
+    // Calculate sentiment for each keyword
+    const keywordSentimentData = topKeywords.map(keyword => {
+      let totalSentiment = 0;
+      let articleCount = 0;
+      
+      // Find articles that contain this keyword
+      newsData.articles.forEach(article => {
+        const text = (article.text || '').toLowerCase();
+        const title = (article.title || '').toLowerCase();
+        const keywordLower = keyword.toLowerCase();
+        
+        if (text.includes(keywordLower) || title.includes(keywordLower)) {
+          totalSentiment += article.sentiment_polarity || 0;
+          articleCount += 1;
+        }
+      });
+      
+      const avgSentiment = articleCount > 0 ? totalSentiment / articleCount : 0;
+      const frequency = trendsData.top_keywords[keyword];
+      
+      return {
+        keyword,
+        frequency,
+        sentiment: avgSentiment,
+        articleCount
+      };
+    }).filter(item => item.articleCount > 0); // Only include keywords that appear in articles
+    
+    return keywordSentimentData;
+  };
+
   // MetaMask donation handler
   const handleDonate = useCallback(async () => {
     setDonationStatus('');
@@ -215,67 +310,6 @@ function App() {
     }
     setDonationLoading(false);
   }, [donationAmount]);
-
-  // Handler for newsletter signup
-  const handleNewsletterSignup = async (e) => {
-    e.preventDefault();
-    setNewsletterStatus('Submitting...');
-    setNewsletterStatusType('info');
-    try {
-      const res = await fetch('http://localhost:8000/newsletter/subscribe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: newsletterEmail })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNewsletterStatus(data.message || 'Check your email for verification!');
-        setNewsletterStatusType('success');
-        setNewsletterEmail('');
-      } else {
-        // Handle different error cases
-        if (res.status === 400 && data.detail) {
-          if (data.detail.includes('already subscribed')) {
-            setNewsletterStatus('✅ You\'re already subscribed! Check your email for verification.');
-            setNewsletterStatusType('success');
-            setNewsletterEmail('');
-          } else {
-            setNewsletterStatus(`Error: ${data.detail}`);
-            setNewsletterStatusType('error');
-          }
-        } else if (res.status === 422 && data.detail) {
-          if (Array.isArray(data.detail)) {
-            // Handle array of validation errors
-            const errorMessages = data.detail.map(err => err.msg || 'Validation error').join(', ');
-            setNewsletterStatus(`Please enter a valid email address.`);
-            setNewsletterStatusType('error');
-          } else {
-            // Handle single validation error
-            setNewsletterStatus(`Please enter a valid email address.`);
-            setNewsletterStatusType('error');
-          }
-        } else {
-          setNewsletterStatus(data.detail || 'Could not subscribe. Please try again.');
-          setNewsletterStatusType('error');
-        }
-      }
-    } catch (err) {
-      console.error('Newsletter signup error:', err);
-      setNewsletterStatus('Error: Could not subscribe. Please try again.');
-      setNewsletterStatusType('error');
-    }
-  };
-
-  // Clear success messages after 5 seconds
-  useEffect(() => {
-    if (newsletterStatusType === 'success' && newsletterStatus) {
-      const timer = setTimeout(() => {
-        setNewsletterStatus('');
-        setNewsletterStatusType('');
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [newsletterStatusType, newsletterStatus]);
 
   // Helper function to get ISO week number
   const getISOWeek = (date) => {
@@ -353,9 +387,6 @@ function App() {
               <h1>Spot trends. Analyze news. Instantly.</h1>
               <p>Welcome to your all-in-one news analysis dashboard. Dive into real-time insights, track emerging stories, and visualize trends from top sources. Whether you're a data enthusiast, journalist, or researcher, discover smarter ways to explore the news—together.</p>
               <div className="hero-buttons">
-                {loading && (
-                  <div className="loading-spinner"></div>
-                )}
                 <button 
                   className="primary-btn" 
                   onClick={runFullPipeline}
@@ -365,6 +396,22 @@ function App() {
                 </button>
                 <button className="secondary-btn" onClick={() => navigate('/learn-more')}>Learn More</button>
               </div>
+              
+              {/* Loading Progress Bar */}
+              {loading && (
+                <div className="loading-container">
+                  <div className="loading-progress-bar">
+                    <div 
+                      className="loading-progress-fill" 
+                      style={{ width: `${loadingProgress}%` }}
+                    ></div>
+                  </div>
+                  <div className="loading-progress-text">
+                    {loadingStep} ({loadingProgress}%)
+                  </div>
+                </div>
+              )}
+              
               {scrapingStatus && (
                 <div className="status-message">
                   {scrapingStatus}
@@ -446,7 +493,59 @@ function App() {
                             <Cell key={`cell-${index}`} fill={entry.color} />
                           ))}
                         </Pie>
-                        <Tooltip />
+                        <Tooltip 
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div style={{
+                                  backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                                  border: `3px solid ${data.color}`,
+                                  borderRadius: '12px',
+                                  padding: '16px',
+                                  boxShadow: '0 8px 25px rgba(0, 0, 0, 0.4)',
+                                  color: 'white',
+                                  fontSize: '14px',
+                                  fontWeight: '500',
+                                  minWidth: '180px'
+                                }}>
+                                  <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    marginBottom: '8px',
+                                    fontWeight: '600',
+                                    fontSize: '16px'
+                                  }}>
+                                    <div style={{
+                                      width: '12px',
+                                      height: '12px',
+                                      backgroundColor: data.color,
+                                      borderRadius: '50%',
+                                      marginRight: '8px'
+                                    }}></div>
+                                    {data.name} Sentiment
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Articles: <strong>{data.value}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Percentage: <strong>{((data.value / prepareSentimentData().reduce((sum, item) => sum + item.value, 0)) * 100).toFixed(1)}%</strong>
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: '12px', 
+                                    color: '#d1d5db',
+                                    fontStyle: 'italic'
+                                  }}>
+                                    {data.name === 'Positive' ? '😊' : data.name === 'Negative' ? '😞' : '😐'} 
+                                    {data.name === 'Positive' ? ' Positive coverage' : 
+                                     data.name === 'Negative' ? ' Negative coverage' : ' Neutral coverage'}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
                   </div>
@@ -459,7 +558,61 @@ function App() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="source" />
                         <YAxis />
-                        <Tooltip />
+                        <Tooltip 
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              const totalArticles = prepareSourceData().reduce((sum, item) => sum + item.count, 0);
+                              const percentage = ((data.count / totalArticles) * 100).toFixed(1);
+                              return (
+                                <div style={{
+                                  backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                                  border: '3px solid #2563eb',
+                                  borderRadius: '12px',
+                                  padding: '16px',
+                                  boxShadow: '0 8px 25px rgba(0, 0, 0, 0.4)',
+                                  color: 'white',
+                                  fontSize: '14px',
+                                  fontWeight: '500',
+                                  minWidth: '200px'
+                                }}>
+                                  <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    marginBottom: '8px',
+                                    fontWeight: '600',
+                                    fontSize: '16px'
+                                  }}>
+                                    <div style={{
+                                      width: '12px',
+                                      height: '12px',
+                                      backgroundColor: '#2563eb',
+                                      borderRadius: '3px',
+                                      marginRight: '8px'
+                                    }}></div>
+                                    {data.source} News
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Articles: <strong>{data.count}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Percentage: <strong>{percentage}%</strong>
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: '12px', 
+                                    color: '#d1d5db',
+                                    fontStyle: 'italic'
+                                  }}>
+                                    📰 {data.source === 'BBC' ? 'British Broadcasting Corporation' : 
+                                         data.source === 'CNN' ? 'Cable News Network' : 
+                                         data.source === 'Reuters' ? 'Reuters News Agency' : 'News Source'}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
                         <Bar dataKey="count" fill="#2563eb" />
                       </BarChart>
                     </ResponsiveContainer>
@@ -473,9 +626,124 @@ function App() {
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="source" />
                         <YAxis domain={[-1, 1]} />
-                        <Tooltip />
+                        <Tooltip 
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              const sentiment = data.avgSentiment;
+                              const sentimentLabel = sentiment > 0.1 ? 'Positive' : sentiment < -0.1 ? 'Negative' : 'Neutral';
+                              const sentimentEmoji = sentiment > 0.1 ? '😊' : sentiment < -0.1 ? '😞' : '😐';
+                              const sentimentColor = sentiment > 0.1 ? '#10b981' : sentiment < -0.1 ? '#ef4444' : '#6b7280';
+                              
+                              return (
+                                <div style={{
+                                  backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                                  border: `3px solid ${sentimentColor}`,
+                                  borderRadius: '12px',
+                                  padding: '16px',
+                                  boxShadow: '0 8px 25px rgba(0, 0, 0, 0.4)',
+                                  color: 'white',
+                                  fontSize: '14px',
+                                  fontWeight: '500',
+                                  minWidth: '220px'
+                                }}>
+                                  <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    marginBottom: '8px',
+                                    fontWeight: '600',
+                                    fontSize: '16px'
+                                  }}>
+                                    <div style={{
+                                      width: '12px',
+                                      height: '12px',
+                                      backgroundColor: sentimentColor,
+                                      borderRadius: '50%',
+                                      marginRight: '8px'
+                                    }}></div>
+                                    {data.source} Sentiment
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Score: <strong>{sentiment.toFixed(3)}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '4px' }}>
+                                    Classification: <strong style={{ color: sentimentColor }}>{sentimentLabel}</strong>
+                                  </div>
+                                  <div style={{ 
+                                    fontSize: '12px', 
+                                    color: '#d1d5db',
+                                    fontStyle: 'italic'
+                                  }}>
+                                    {sentimentEmoji} {sentimentLabel} coverage from {data.source}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
                         <Bar dataKey="avgSentiment" fill="#f59e42" />
                       </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Keyword Sentiment Analysis */}
+                  <div className="chart-card">
+                    <h3>Keyword Sentiment Analysis</h3>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <ScatterChart data={prepareKeywordSentimentData()}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="frequency" 
+                          name="Frequency" 
+                          label={{ value: 'Keyword Frequency', position: 'insideBottom', offset: -5 }}
+                        />
+                        <YAxis 
+                          dataKey="sentiment" 
+                          name="Sentiment" 
+                          domain={[-1, 1]}
+                          label={{ value: 'Average Sentiment', angle: -90, position: 'insideLeft' }}
+                        />
+                        <Tooltip 
+                          cursor={{ strokeDasharray: '3 3' }}
+                          content={({ active, payload, label }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div style={{
+                                  backgroundColor: 'rgba(0, 0, 0, 0.9)',
+                                  border: '2px solid #2563eb',
+                                  borderRadius: '8px',
+                                  padding: '12px',
+                                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                                  color: 'white',
+                                  fontSize: '14px',
+                                  fontWeight: '500'
+                                }}>
+                                  <div style={{ marginBottom: '4px', fontWeight: '600', color: '#60a5fa' }}>
+                                    Keyword: <strong>{data.keyword}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '2px' }}>
+                                    Frequency: <strong>{data.frequency}</strong>
+                                  </div>
+                                  <div style={{ marginBottom: '2px' }}>
+                                    Sentiment: <strong>{data.sentiment.toFixed(3)}</strong>
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: '#d1d5db' }}>
+                                    Articles: {data.articleCount}
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                        <Scatter 
+                          dataKey="sentiment" 
+                          fill="#8884d8"
+                          r={6}
+                        />
+                      </ScatterChart>
                     </ResponsiveContainer>
                   </div>
 
@@ -495,7 +763,66 @@ function App() {
                             <CartesianGrid strokeDasharray="3 3" />
                             <XAxis type="number" />
                             <YAxis dataKey="keyword" type="category" width={100} />
-                            <Tooltip />
+                            <Tooltip 
+                              content={({ active, payload, label }) => {
+                                if (active && payload && payload.length) {
+                                  const data = payload[0].payload;
+                                  const totalKeywords = keywordData.reduce((sum, item) => sum + item.count, 0);
+                                  const percentage = ((data.count / totalKeywords) * 100).toFixed(1);
+                                  const rank = keywordData.findIndex(item => item.keyword === data.keyword) + 1;
+                                  
+                                  return (
+                                    <div style={{
+                                      backgroundColor: 'rgba(0, 0, 0, 0.95)',
+                                      border: '3px solid #10b981',
+                                      borderRadius: '12px',
+                                      padding: '16px',
+                                      boxShadow: '0 8px 25px rgba(0, 0, 0, 0.4)',
+                                      color: 'white',
+                                      fontSize: '14px',
+                                      fontWeight: '500',
+                                      minWidth: '250px'
+                                    }}>
+                                      <div style={{ 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        marginBottom: '8px',
+                                        fontWeight: '600',
+                                        fontSize: '16px'
+                                      }}>
+                                        <div style={{
+                                          width: '12px',
+                                          height: '12px',
+                                          backgroundColor: '#10b981',
+                                          borderRadius: '3px',
+                                          marginRight: '8px'
+                                        }}></div>
+                                        #{rank} Trending Keyword
+                                      </div>
+                                      <div style={{ marginBottom: '4px' }}>
+                                        Keyword: <strong style={{ color: '#10b981' }}>"{data.keyword}"</strong>
+                                      </div>
+                                      <div style={{ marginBottom: '4px' }}>
+                                        Mentions: <strong>{data.count}</strong>
+                                      </div>
+                                      <div style={{ marginBottom: '4px' }}>
+                                        Share: <strong>{percentage}%</strong>
+                                      </div>
+                                      <div style={{ 
+                                        fontSize: '12px', 
+                                        color: '#d1d5db',
+                                        fontStyle: 'italic'
+                                      }}>
+                                        🔥 {rank === 1 ? 'Most trending topic' : 
+                                             rank <= 3 ? 'Top trending topic' : 
+                                             rank <= 5 ? 'Popular topic' : 'Trending topic'}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}
+                            />
                             <Bar dataKey="count" fill="#10b981" />
                           </BarChart>
                         </ResponsiveContainer>
@@ -584,35 +911,7 @@ function App() {
           </section>
 
           {/* Newsletter Signup Section */}
-          <section className="newsletter-section">
-            <div className="newsletter-container card-horizontal">
-              <img src="/envelope.png" alt="Newsletter Envelope" className="newsletter-image" />
-              <div className="newsletter-content">
-                <h2>Join Our Newsletter</h2>
-                <p>Get a weekly summary of the hottest news, straight to your inbox!</p>
-                <form onSubmit={handleNewsletterSignup} className="newsletter-form">
-                  <input
-                    type="email"
-                    value={newsletterEmail}
-                    onChange={e => setNewsletterEmail(e.target.value)}
-                    placeholder="Enter your email"
-                    required
-                    className="newsletter-input"
-                  />
-                  <button type="submit" className="primary-btn">Subscribe</button>
-                </form>
-                {newsletterStatus && (
-                  <div className={`newsletter-status${
-                    newsletterStatusType === 'error' ? ' error' : 
-                    newsletterStatusType === 'success' ? '' : 
-                    newsletterStatusType === 'info' ? ' info' : ''
-                  }`}>
-                    {newsletterStatus}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
+          <NewsletterSignup />
 
           {/* FAQ Section */}
           <section className="faq-section" id="faq">
