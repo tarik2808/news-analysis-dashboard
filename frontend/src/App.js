@@ -421,6 +421,12 @@ function App() {
   const fetchSnapshot = useCallback(async (range) => {
     setLoading(true);
     setError(null);
+    
+    // Clear localStorage cache to ensure fresh data
+    localStorage.removeItem('newsData');
+    localStorage.removeItem('trendsData');
+    localStorage.removeItem('showCharts');
+    
     let url = '';
     const today = new Date();
     
@@ -430,14 +436,17 @@ function App() {
       const day = today.getDate().toString().padStart(2, '0');
       url = `${API_BASE_URL}/snapshots/day/${year}-${month}-${day}`;
     } else if (range === 'week') {
-      const year = today.getFullYear();
-      // Use ISO week calculation to match backend expectation
-      const week = getISOWeek(today);
-      url = `${API_BASE_URL}/snapshots/week/${year}-${week.toString().padStart(2, '0')}`;
-    } else if (range === 'month') {
+      // Use rolling 7-day period instead of ISO week
       const year = today.getFullYear();
       const month = (today.getMonth() + 1).toString().padStart(2, '0');
-      url = `${API_BASE_URL}/snapshots/month/${year}-${month}`;
+      const day = today.getDate().toString().padStart(2, '0');
+      url = `${API_BASE_URL}/snapshots/rolling-week/${year}-${month}-${day}`;
+    } else if (range === 'month') {
+      // Use rolling 30-day period instead of calendar month
+      const year = today.getFullYear();
+      const month = (today.getMonth() + 1).toString().padStart(2, '0');
+      const day = today.getDate().toString().padStart(2, '0');
+      url = `${API_BASE_URL}/snapshots/rolling-month/${year}-${month}-${day}`;
     }
     try {
       const response = await axios.get(url, { timeout: 10000 }); // 10s timeout
@@ -592,6 +601,51 @@ function App() {
             <section className="charts-section" ref={chartsRef}>
               <div className="charts-container">
                 <h2>News Analysis Dashboard</h2>
+                
+                {/* Export Buttons */}
+                <div className="export-buttons">
+                  <h3>Export Data</h3>
+                  <div className="export-button-group">
+                    <button 
+                      className="export-btn"
+                      onClick={() => window.open(`${API_BASE_URL}/export/articles`, '_blank')}
+                      title="Download article details with sentiment analysis"
+                    >
+                      📄 Articles CSV
+                    </button>
+                    <button 
+                      className="export-btn"
+                      onClick={() => window.open(`${API_BASE_URL}/export/sentiment`, '_blank')}
+                      title="Download sentiment analysis summary"
+                    >
+                      😊 Sentiment CSV
+                    </button>
+                    <button 
+                      className="export-btn"
+                      onClick={() => window.open(`${API_BASE_URL}/export/trends`, '_blank')}
+                      title="Download trending keywords analysis"
+                    >
+                      🔥 Trends CSV
+                    </button>
+                    <button 
+                      className="export-btn"
+                      onClick={() => window.open(`${API_BASE_URL}/export/complete`, '_blank')}
+                      title="Download complete analysis report"
+                    >
+                      📊 Complete CSV
+                    </button>
+                    <button 
+                      className="export-btn primary-export"
+                      onClick={() => window.open(`${API_BASE_URL}/export/all`, '_blank')}
+                      title="Download all data combined in one file"
+                    >
+                      📋 All Data CSV
+                    </button>
+                  </div>
+                  <p className="export-note">
+                    All exports are Excel-compatible with proper formatting and percentages
+                  </p>
+                </div>
                 
                 <div className="charts-grid">
                   {/* Sentiment Distribution */}

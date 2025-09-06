@@ -4,6 +4,8 @@ from pydantic import BaseModel, EmailStr
 from typing import List, Optional
 import pandas as pd
 import os
+import csv
+import io
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -207,6 +209,18 @@ def full_pipeline(req: ScrapeRequest):
         print(f"[ERROR] Date parsing failed: {e}")
     temporal_trends = trend_analyzer.analyze_temporal_trends(df)
     trend_analyzer.plot_trends(df)
+    
+    # Convert result to JSON-serializable format
+    def convert_timestamps(obj):
+        if isinstance(obj, dict):
+            return {str(k) if hasattr(k, 'strftime') else k: convert_timestamps(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_timestamps(item) for item in obj]
+        elif hasattr(obj, 'strftime'):  # Timestamp objects
+            return str(obj)
+        else:
+            return obj
+    
     result = {
         "message": f"Full pipeline completed for {len(df)} articles.",
         "top_keywords": keywords,
@@ -214,15 +228,51 @@ def full_pipeline(req: ScrapeRequest):
             'article_counts': source_trends['article_counts'].to_dict(),
             'sentiment_by_source': source_trends['sentiment_by_source'].to_dict()
         },
-        "temporal_trends": temporal_trends.to_dict(),
+        "temporal_trends": convert_timestamps(temporal_trends.to_dict()),
         "plot_files": [
             "trend_plots/sentiment_by_source.png",
             "trend_plots/source_distribution.png",
             "trend_plots/temporal_trends.png",
             "trend_plots/wordcloud.png"
         ],
-        "articles": df.to_dict(orient="records")
+        "articles": convert_timestamps(df.to_dict(orient="records"))
     }
+    
+    # Save snapshot to database for time-based filtering
+    db = SessionLocal()
+    try:
+        # Create today's snapshot
+        today = datetime.datetime.now().date()
+        
+        # Check if snapshot already exists for today
+        existing_snapshot = db.query(Snapshot).filter(
+            Snapshot.date == today,
+            Snapshot.period_type == 'day'
+        ).first()
+        
+        if existing_snapshot:
+            # Update existing snapshot
+            existing_snapshot.data = json.dumps(result)
+            db.commit()
+            print(f"Updated snapshot for {today}")
+        else:
+            # Create new snapshot
+            snapshot = Snapshot(
+                date=today,
+                period_type='day',
+                data=json.dumps(result)
+            )
+            db.add(snapshot)
+            db.commit()
+            print(f"Created new snapshot for {today}")
+            
+    except Exception as e:
+        print(f"Database save error: {e}")
+        db.rollback()
+    finally:
+        db.close()
+    
+    return result
 
 @app.post("/full_pipeline_stream", summary="Run the full pipeline with real-time progress streaming")
 def full_pipeline_stream(req: ScrapeRequest):
@@ -286,7 +336,7 @@ def full_pipeline_stream(req: ScrapeRequest):
                     return str(obj)
                 else:
                     return obj
-
+            
             # Final result
             result = {
                 "message": f"Full pipeline completed for {len(df)} articles.",
@@ -338,19 +388,34 @@ def full_pipeline_stream(req: ScrapeRequest):
             # Save snapshot to database
             db = SessionLocal()
             try:
-                # Result is already converted to JSON-serializable format
-                serializable_result = result
+                # Create today's snapshot
+                today = datetime.datetime.now().date()
                 
-                # Save to database (simplified version)
-                snapshot_data = {
-                    'date': datetime.datetime.now().strftime('%Y-%m-%d'),
-                    'data': json.dumps(serializable_result)
-                }
+                # Check if snapshot already exists for today
+                existing_snapshot = db.query(Snapshot).filter(
+                    Snapshot.date == today,
+                    Snapshot.period_type == 'day'
+                ).first()
                 
-                # You can add database saving logic here if needed
-                
+                if existing_snapshot:
+                    # Update existing snapshot
+                    existing_snapshot.data = json.dumps(result)
+                    db.commit()
+                    print(f"Updated snapshot for {today}")
+                else:
+                    # Create new snapshot
+                    snapshot = Snapshot(
+                        date=today,
+                        period_type='day',
+                        data=json.dumps(result)
+                    )
+                    db.add(snapshot)
+                    db.commit()
+                    print(f"Created new snapshot for {today}")
+                    
             except Exception as e:
                 print(f"Database save error: {e}")
+                db.rollback()
             finally:
                 db.close()
             
@@ -371,6 +436,558 @@ def download_file(filename: str):
             return FileResponse(path, filename=filename)
     raise HTTPException(status_code=404, detail="File not found")
 
+@app.get("/export/articles", summary="Export analyzed articles as Excel-compatible CSV")
+def export_articles_csv():
+    """Export all analyzed articles with sentiment scores and metadata in Excel-friendly format"""
+    try:
+        if not os.path.exists('analyzed_articles.csv'):
+            raise HTTPException(status_code=404, detail="No analyzed articles found. Please run analysis first.")
+        
+        df = pd.read_csv('analyzed_articles.csv')
+        
+        # Clean and format data for Excel compatibility
+        # Convert keywords dict to readable string with proper formatting
+        def format_keywords(keywords_str):
+            try:
+                if isinstance(keywords_str, str) and keywords_str.startswith('{'):
+                    keywords_dict = eval(keywords_str)
+                    # Sort by frequency and format nicely
+                    sorted_keywords = sorted(keywords_dict.items(), key=lambda x: x[1], reverse=True)
+                    return '; '.join([f"{k} ({v})" for k, v in sorted_keywords[:20]])  # Top 10 keywords
+                return str(keywords_str)
+            except:
+                return str(keywords_str)
+        
+        df['keywords'] = df['keywords'].apply(format_keywords)
+        
+        # Clean text content (remove excessive newlines and special characters)
+        df['text'] = df['text'].str.replace('\n', ' ').str.replace('\r', ' ').str.replace('\t', ' ').str.strip()
+        df['title'] = df['title'].str.replace('\n', ' ').str.replace('\r', ' ').str.replace('\t', ' ').str.strip()
+        
+        # Format sentiment polarity as percentage for Excel
+        df['sentiment_percentage'] = (df['sentiment_polarity'] * 100).round(2)
+        df['sentiment_percentage'] = df['sentiment_percentage'].astype(str) + '%'
+        
+        # Add sentiment category
+        df['sentiment_category'] = df['sentiment_polarity'].apply(
+            lambda x: 'Positive' if x > 0.1 else 'Negative' if x < -0.1 else 'Neutral'
+        )
+        
+        # Add word count
+        df['word_count'] = df['text'].str.split().str.len()
+        
+        # Format dates properly for Excel
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Reorder columns for better Excel display
+        column_order = ['title', 'source', 'date', 'sentiment_category', 'sentiment_percentage', 
+                       'sentiment_polarity', 'word_count', 'keywords', 'text', 'url']
+        
+        # Only include columns that exist
+        existing_columns = [col for col in column_order if col in df.columns]
+        df = df[existing_columns]
+        
+        # Ensure all columns are properly formatted
+        df = df.fillna('')  # Replace NaN with empty strings
+        
+        # Create CSV in memory with proper encoding
+        output = io.StringIO()
+        df.to_csv(output, index=False, encoding='utf-8-sig')  # UTF-8 with BOM for Excel
+        output.seek(0)
+        
+        # Return as downloadable file
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": f"attachment; filename=analyzed_articles_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+@app.get("/export/sentiment", summary="Export sentiment analysis results as Excel-compatible CSV")
+def export_sentiment_csv():
+    """Export sentiment analysis summary by source and time in Excel-friendly format"""
+    try:
+        if not os.path.exists('analyzed_articles.csv'):
+            raise HTTPException(status_code=404, detail="No analyzed articles found. Please run analysis first.")
+        
+        df = pd.read_csv('analyzed_articles.csv')
+        
+        # Create sentiment summary
+        sentiment_summary = []
+        
+        # Overall sentiment stats
+        total_articles = len(df)
+        positive_count = len(df[df['sentiment_polarity'] > 0.1])
+        negative_count = len(df[df['sentiment_polarity'] < -0.1])
+        neutral_count = len(df[(df['sentiment_polarity'] >= -0.1) & (df['sentiment_polarity'] <= 0.1)])
+        
+        overall_stats = {
+            'Analysis_Type': 'Overall Summary',
+            'Source': 'All Sources Combined',
+            'Total_Articles': total_articles,
+            'Average_Sentiment_Score': round(df['sentiment_polarity'].mean(), 3),
+            'Average_Sentiment_Percentage': f"{round(df['sentiment_polarity'].mean() * 100, 2)}%",
+            'Positive_Articles': positive_count,
+            'Positive_Percentage': f"{round((positive_count / total_articles) * 100, 2)}%",
+            'Negative_Articles': negative_count,
+            'Negative_Percentage': f"{round((negative_count / total_articles) * 100, 2)}%",
+            'Neutral_Articles': neutral_count,
+            'Neutral_Percentage': f"{round((neutral_count / total_articles) * 100, 2)}%",
+            'Highest_Sentiment': round(df['sentiment_polarity'].max(), 3),
+            'Lowest_Sentiment': round(df['sentiment_polarity'].min(), 3),
+            'Sentiment_Range': f"{round(df['sentiment_polarity'].min(), 3)} to {round(df['sentiment_polarity'].max(), 3)}"
+        }
+        sentiment_summary.append(overall_stats)
+        
+        # By source
+        for source in df['source'].unique():
+            source_df = df[df['source'] == source]
+            source_total = len(source_df)
+            source_positive = len(source_df[source_df['sentiment_polarity'] > 0.1])
+            source_negative = len(source_df[source_df['sentiment_polarity'] < -0.1])
+            source_neutral = len(source_df[(source_df['sentiment_polarity'] >= -0.1) & (source_df['sentiment_polarity'] <= 0.1)])
+            
+            source_stats = {
+                'Analysis_Type': 'By Source',
+                'Source': source,
+                'Total_Articles': source_total,
+                'Average_Sentiment_Score': round(source_df['sentiment_polarity'].mean(), 3),
+                'Average_Sentiment_Percentage': f"{round(source_df['sentiment_polarity'].mean() * 100, 2)}%",
+                'Positive_Articles': source_positive,
+                'Positive_Percentage': f"{round((source_positive / source_total) * 100, 2)}%" if source_total > 0 else "0%",
+                'Negative_Articles': source_negative,
+                'Negative_Percentage': f"{round((source_negative / source_total) * 100, 2)}%" if source_total > 0 else "0%",
+                'Neutral_Articles': source_neutral,
+                'Neutral_Percentage': f"{round((source_neutral / source_total) * 100, 2)}%" if source_total > 0 else "0%",
+                'Highest_Sentiment': round(source_df['sentiment_polarity'].max(), 3),
+                'Lowest_Sentiment': round(source_df['sentiment_polarity'].min(), 3),
+                'Sentiment_Range': f"{round(source_df['sentiment_polarity'].min(), 3)} to {round(source_df['sentiment_polarity'].max(), 3)}"
+            }
+            sentiment_summary.append(source_stats)
+        
+        # Convert to DataFrame and CSV
+        summary_df = pd.DataFrame(sentiment_summary)
+        
+        # Add analysis timestamp
+        summary_df['Analysis_Date'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        output = io.StringIO()
+        summary_df.to_csv(output, index=False, encoding='utf-8-sig')
+        output.seek(0)
+        
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": f"attachment; filename=sentiment_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+@app.get("/export/trends", summary="Export trending keywords and analysis as Excel-compatible CSV")
+def export_trends_csv():
+    """Export trending keywords and trend analysis results in Excel-friendly format"""
+    try:
+        if not os.path.exists('analyzed_articles.csv'):
+            raise HTTPException(status_code=404, detail="No analyzed articles found. Please run analysis first.")
+        
+        df = pd.read_csv('analyzed_articles.csv')
+        
+        # Extract trending keywords from the keywords column
+        import ast
+        all_keywords = {}
+        
+        for keywords_str in df['keywords']:
+            try:
+                if isinstance(keywords_str, str) and keywords_str.startswith('{'):
+                    keywords_dict = ast.literal_eval(keywords_str)
+                    for keyword, count in keywords_dict.items():
+                        if keyword in all_keywords:
+                            all_keywords[keyword] += count
+                        else:
+                            all_keywords[keyword] = count
+            except:
+                continue
+        
+        # Convert to DataFrame with proper filtering
+        keywords_data = []
+        total_articles = len(df)
+        total_keyword_mentions = sum(all_keywords.values())
+        
+        for keyword, count in all_keywords.items():
+            # Filter out non-meaningful keywords
+            stop_words = [
+                'the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'man', 'oil', 'sit', 'try', 'use', 'she', 'too', 'any', 'ask', 'end', 'far', 'few', 'got', 'let', 'put', 'say',
+                'this', 'that', 'with', 'have', 'will', 'been', 'than', 'more', 'also', 'each', 'which', 'their', 'time', 'very', 'when', 'much', 'some', 'these', 'other', 'into', 'only', 'over', 'think', 'also', 'back', 'after', 'first', 'well', 'work', 'life', 'where', 'most', 'even', 'much', 'take', 'here', 'just', 'like', 'long', 'make', 'many', 'such', 'turn', 'want', 'know', 'look', 'right', 'good', 'great', 'little', 'own', 'other', 'old', 'see', 'him', 'two', 'more', 'go', 'no', 'way', 'could', 'my', 'than', 'first', 'been', 'call', 'who', 'its', 'now', 'find', 'long', 'down', 'day', 'did', 'get', 'come', 'made', 'may', 'part',
+                'lafufu', 'brooks', 'ahn', 'kent', 'horres'  # Remove specific problematic words
+            ]
+            
+            if (isinstance(keyword, str) and 
+                len(keyword) > 2 and 
+                len(keyword) < 20 and  # Avoid very long words
+                not keyword.startswith('{') and 
+                not keyword.startswith('"') and
+                not keyword.isdigit() and
+                keyword.lower() not in stop_words and
+                keyword.isalpha() and  # Only alphabetic characters
+                not keyword.endswith('s') or len(keyword) > 4):  # Avoid single letters with 's'
+                
+                # Calculate percentage of total keyword mentions (more meaningful)
+                percentage = round((count / total_keyword_mentions) * 100, 2)
+                keywords_data.append({
+                    'Rank': 0,  # Will be filled after sorting
+                    'Keyword': keyword.title(),  # Capitalize for better readability
+                    'Frequency': count,
+                    'Percentage': f"{percentage}%",
+                    'Frequency_Per_Article': round(count / total_articles, 3),
+                    'Trend_Score': round(count * (count / total_articles), 2),  # Weighted score
+                    'Category': 'High' if count >= total_articles * 0.1 else 'Medium' if count >= total_articles * 0.05 else 'Low'
+                })
+        
+        keywords_df = pd.DataFrame(keywords_data)
+        keywords_df = keywords_df.sort_values('Frequency', ascending=False)
+        
+        # Add ranking
+        keywords_df['Rank'] = range(1, len(keywords_df) + 1)
+        
+        # Reorder columns for better Excel display
+        keywords_df = keywords_df[['Rank', 'Keyword', 'Frequency', 'Percentage', 'Frequency_Per_Article', 'Trend_Score', 'Category']]
+        
+        # Add summary statistics
+        summary_stats = {
+            'Rank': 'SUMMARY',
+            'Keyword': f'Total Unique Keywords: {len(keywords_df)}',
+            'Frequency': f'Total Mentions: {total_keyword_mentions}',
+            'Percentage': f'Average per Keyword: {round(keywords_df["Frequency"].mean(), 2)}',
+            'Frequency_Per_Article': f'Most Frequent: {keywords_df.iloc[0]["Keyword"]} ({keywords_df.iloc[0]["Frequency"]} times)',
+            'Trend_Score': f'Analysis Date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+            'Category': f'Articles Analyzed: {total_articles}'
+        }
+        
+        # Add summary as first row
+        summary_df = pd.DataFrame([summary_stats])
+        keywords_df = pd.concat([summary_df, keywords_df], ignore_index=True)
+        
+        output = io.StringIO()
+        keywords_df.to_csv(output, index=False, encoding='utf-8-sig')
+        output.seek(0)
+        
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": f"attachment; filename=trending_keywords_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+@app.get("/export/complete", summary="Export complete analysis report as Excel-compatible CSV")
+def export_complete_analysis_csv():
+    """Export comprehensive analysis report including articles, sentiment, and trends in Excel-friendly format"""
+    try:
+        if not os.path.exists('analyzed_articles.csv'):
+            raise HTTPException(status_code=404, detail="No analyzed articles found. Please run analysis first.")
+        
+        df = pd.read_csv('analyzed_articles.csv')
+        
+        # Clean and format data for Excel compatibility
+        def format_keywords(keywords_str):
+            try:
+                if isinstance(keywords_str, str) and keywords_str.startswith('{'):
+                    keywords_dict = eval(keywords_str)
+                    sorted_keywords = sorted(keywords_dict.items(), key=lambda x: x[1], reverse=True)
+                    return '; '.join([f"{k} ({v})" for k, v in sorted_keywords[:20]])
+                return str(keywords_str)
+            except:
+                return str(keywords_str)
+        
+        df['keywords'] = df['keywords'].apply(format_keywords)
+        
+        # Clean text content (remove excessive newlines and special characters)
+        df['text'] = df['text'].str.replace('\n', ' ').str.replace('\r', ' ').str.replace('\t', ' ').str.strip()
+        df['title'] = df['title'].str.replace('\n', ' ').str.replace('\r', ' ').str.replace('\t', ' ').str.strip()
+        
+        # Add comprehensive analysis columns
+        df['sentiment_category'] = df['sentiment_polarity'].apply(
+            lambda x: 'Positive' if x > 0.1 else 'Negative' if x < -0.1 else 'Neutral'
+        )
+        df['sentiment_strength'] = df['sentiment_polarity'].apply(
+            lambda x: 'Strong' if abs(x) > 0.5 else 'Moderate' if abs(x) > 0.2 else 'Weak'
+        )
+        df['sentiment_percentage'] = (df['sentiment_polarity'] * 100).round(2)
+        df['sentiment_percentage'] = df['sentiment_percentage'].astype(str) + '%'
+        
+        # Add word count and reading time estimation
+        df['word_count'] = df['text'].str.split().str.len()
+        df['estimated_reading_time_minutes'] = (df['word_count'] / 200).round(1)  # Average 200 words per minute
+        
+        # Add text analysis metrics
+        df['sentence_count'] = df['text'].str.count(r'[.!?]+')
+        df['avg_words_per_sentence'] = (df['word_count'] / df['sentence_count']).round(1)
+        df['avg_words_per_sentence'] = df['avg_words_per_sentence'].fillna(0)
+        
+        # Format dates properly for Excel
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Add analysis metadata
+        df['analysis_timestamp'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        df['analysis_version'] = '1.0'
+        
+        # Reorder columns for better Excel display
+        column_order = [
+            'title', 'source', 'date', 'url',
+            'sentiment_category', 'sentiment_strength', 'sentiment_percentage', 'sentiment_polarity',
+            'word_count', 'sentence_count', 'avg_words_per_sentence', 'estimated_reading_time_minutes',
+            'keywords', 'text',
+            'analysis_timestamp', 'analysis_version'
+        ]
+        
+        # Only include columns that exist
+        existing_columns = [col for col in column_order if col in df.columns]
+        df = df[existing_columns]
+        
+        # Ensure all columns are properly formatted
+        df = df.fillna('')  # Replace NaN with empty strings
+        
+        # Create CSV in memory with proper encoding
+        output = io.StringIO()
+        df.to_csv(output, index=False, encoding='utf-8-sig')
+        output.seek(0)
+        
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": f"attachment; filename=complete_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
+@app.get("/export/all", summary="Export all analysis data as Excel-compatible CSV")
+def export_all_analysis_csv():
+    """Export comprehensive analysis including articles, sentiment, trends, and summary statistics"""
+    try:
+        if not os.path.exists('analyzed_articles.csv'):
+            raise HTTPException(status_code=404, detail="No analyzed articles found. Please run analysis first.")
+        
+        df = pd.read_csv('analyzed_articles.csv')
+        
+        # Create a comprehensive report with multiple sheets worth of data
+        all_data = []
+        
+        # 1. Article Analysis Data
+        def format_keywords(keywords_str):
+            try:
+                if isinstance(keywords_str, str) and keywords_str.startswith('{'):
+                    keywords_dict = eval(keywords_str)
+                    sorted_keywords = sorted(keywords_dict.items(), key=lambda x: x[1], reverse=True)
+                    return '; '.join([f"{k} ({v})" for k, v in sorted_keywords[:20]])
+                return str(keywords_str)
+            except:
+                return str(keywords_str)
+        
+        # Clean and format article data
+        article_data = df.copy()
+        article_data['keywords'] = article_data['keywords'].apply(format_keywords)
+        article_data['text'] = article_data['text'].str.replace('\n', ' ').str.replace('\r', ' ').str.replace('\t', ' ').str.strip()
+        article_data['title'] = article_data['title'].str.replace('\n', ' ').str.replace('\r', ' ').str.replace('\t', ' ').str.strip()
+        
+        # Add analysis columns
+        article_data['sentiment_category'] = article_data['sentiment_polarity'].apply(
+            lambda x: 'Positive' if x > 0.1 else 'Negative' if x < -0.1 else 'Neutral'
+        )
+        article_data['sentiment_percentage'] = (article_data['sentiment_polarity'] * 100).round(2).astype(str) + '%'
+        article_data['word_count'] = article_data['text'].str.split().str.len()
+        article_data['estimated_reading_time'] = (article_data['word_count'] / 200).round(1)
+        
+        # Format dates
+        if 'date' in article_data.columns:
+            article_data['date'] = pd.to_datetime(article_data['date'], errors='coerce').dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Add section identifier
+        article_data['Data_Section'] = 'Article Analysis'
+        article_data['Analysis_Date'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Reorder columns
+        article_columns = ['Data_Section', 'title', 'source', 'date', 'sentiment_category', 'sentiment_percentage', 
+                          'word_count', 'estimated_reading_time', 'keywords', 'url', 'Analysis_Date']
+        existing_article_columns = [col for col in article_columns if col in article_data.columns]
+        article_data = article_data[existing_article_columns]
+        
+        all_data.append(article_data)
+        
+        # 2. Sentiment Summary Data
+        sentiment_summary = []
+        total_articles = len(df)
+        positive_count = len(df[df['sentiment_polarity'] > 0.1])
+        negative_count = len(df[df['sentiment_polarity'] < -0.1])
+        neutral_count = len(df[(df['sentiment_polarity'] >= -0.1) & (df['sentiment_polarity'] <= 0.1)])
+        
+        # Overall summary
+        overall_stats = {
+            'Data_Section': 'Sentiment Summary',
+            'Analysis_Type': 'Overall Summary',
+            'Source': 'All Sources Combined',
+            'Total_Articles': total_articles,
+            'Average_Sentiment_Score': round(df['sentiment_polarity'].mean(), 3),
+            'Average_Sentiment_Percentage': f"{round(df['sentiment_polarity'].mean() * 100, 2)}%",
+            'Positive_Articles': positive_count,
+            'Positive_Percentage': f"{round((positive_count / total_articles) * 100, 2)}%",
+            'Negative_Articles': negative_count,
+            'Negative_Percentage': f"{round((negative_count / total_articles) * 100, 2)}%",
+            'Neutral_Articles': neutral_count,
+            'Neutral_Percentage': f"{round((neutral_count / total_articles) * 100, 2)}%",
+            'Analysis_Date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        sentiment_summary.append(overall_stats)
+        
+        # By source
+        for source in df['source'].unique():
+            source_df = df[df['source'] == source]
+            source_total = len(source_df)
+            source_positive = len(source_df[source_df['sentiment_polarity'] > 0.1])
+            source_negative = len(source_df[source_df['sentiment_polarity'] < -0.1])
+            source_neutral = len(source_df[(source_df['sentiment_polarity'] >= -0.1) & (source_df['sentiment_polarity'] <= 0.1)])
+            
+            source_stats = {
+                'Data_Section': 'Sentiment Summary',
+                'Analysis_Type': 'By Source',
+                'Source': source,
+                'Total_Articles': source_total,
+                'Average_Sentiment_Score': round(source_df['sentiment_polarity'].mean(), 3),
+                'Average_Sentiment_Percentage': f"{round(source_df['sentiment_polarity'].mean() * 100, 2)}%",
+                'Positive_Articles': source_positive,
+                'Positive_Percentage': f"{round((source_positive / source_total) * 100, 2)}%" if source_total > 0 else "0%",
+                'Negative_Articles': source_negative,
+                'Negative_Percentage': f"{round((source_negative / source_total) * 100, 2)}%" if source_total > 0 else "0%",
+                'Neutral_Articles': source_neutral,
+                'Neutral_Percentage': f"{round((source_neutral / source_total) * 100, 2)}%" if source_total > 0 else "0%",
+                'Analysis_Date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            sentiment_summary.append(source_stats)
+        
+        sentiment_df = pd.DataFrame(sentiment_summary)
+        all_data.append(sentiment_df)
+        
+        # 3. Trending Keywords Data
+        import ast
+        all_keywords = {}
+        
+        for keywords_str in df['keywords']:
+            try:
+                if isinstance(keywords_str, str) and keywords_str.startswith('{'):
+                    keywords_dict = ast.literal_eval(keywords_str)
+                    for keyword, count in keywords_dict.items():
+                        if keyword in all_keywords:
+                            all_keywords[keyword] += count
+                        else:
+                            all_keywords[keyword] = count
+            except:
+                continue
+        
+        keywords_data = []
+        total_keyword_mentions = sum(all_keywords.values())
+        for keyword, count in all_keywords.items():
+            if (isinstance(keyword, str) and len(keyword) > 2 and len(keyword) < 20 and 
+                keyword.isalpha() and keyword.lower() not in ['the', 'and', 'for', 'are', 'but', 'not']):
+                
+                # Calculate percentage of total keyword mentions (more meaningful)
+                percentage = round((count / total_keyword_mentions) * 100, 2)
+                keywords_data.append({
+                    'Data_Section': 'Trending Keywords',
+                    'Rank': 0,  # Will be filled after sorting
+                    'Keyword': keyword.title(),
+                    'Frequency': count,
+                    'Percentage': f"{percentage}%",
+                    'Frequency_Per_Article': round(count / total_articles, 3),
+                    'Trend_Score': round(count * (count / total_articles), 2),
+                    'Category': 'High' if count >= total_articles * 0.1 else 'Medium' if count >= total_articles * 0.05 else 'Low',
+                    'Analysis_Date': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
+        
+        keywords_df = pd.DataFrame(keywords_data)
+        keywords_df = keywords_df.sort_values('Frequency', ascending=False)
+        keywords_df['Rank'] = range(1, len(keywords_df) + 1)
+        
+        all_data.append(keywords_df)
+        
+        # Create a cleaner combined report with better structure
+        # Add section separators and headers for better readability
+        section_separators = []
+        
+        # Add section headers
+        section_separators.append(pd.DataFrame([{
+            'Data_Section': '=== ARTICLE ANALYSIS ===',
+            'Source': '',
+            'Total_Articles': '',
+            'Average_Sentiment': '',
+            'Average_Sentiment_Percentage': '',
+            'Positive_Articles': '',
+            'Positive_Percentage': '',
+            'Negative_Articles': '',
+            'Negative_Percentage': '',
+            'Neutral_Articles': '',
+            'Neutral_Percentage': '',
+            'Analysis_Date': ''
+        }]))
+        
+        # Add articles data
+        section_separators.append(article_data)
+        
+        # Add sentiment section header
+        section_separators.append(pd.DataFrame([{
+            'Data_Section': '=== SENTIMENT SUMMARY ===',
+            'Source': '',
+            'Total_Articles': '',
+            'Average_Sentiment': '',
+            'Average_Sentiment_Percentage': '',
+            'Positive_Articles': '',
+            'Positive_Percentage': '',
+            'Negative_Articles': '',
+            'Negative_Percentage': '',
+            'Neutral_Articles': '',
+            'Neutral_Percentage': '',
+            'Analysis_Date': ''
+        }]))
+        
+        # Add sentiment data
+        section_separators.append(sentiment_df)
+        
+        # Add trends section header
+        section_separators.append(pd.DataFrame([{
+            'Data_Section': '=== TRENDING KEYWORDS ===',
+            'Source': '',
+            'Total_Articles': '',
+            'Average_Sentiment': '',
+            'Average_Sentiment_Percentage': '',
+            'Positive_Articles': '',
+            'Positive_Percentage': '',
+            'Negative_Articles': '',
+            'Negative_Percentage': '',
+            'Neutral_Articles': '',
+            'Neutral_Percentage': '',
+            'Analysis_Date': ''
+        }]))
+        
+        # Add trends data
+        section_separators.append(keywords_df)
+        
+        # Combine all data with separators
+        combined_df = pd.concat(section_separators, ignore_index=True)
+        
+        # Create CSV in memory with proper encoding
+        output = io.StringIO()
+        combined_df.to_csv(output, index=False, encoding='utf-8-sig')
+        output.seek(0)
+        
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8-sig')),
+            media_type="text/csv; charset=utf-8-sig",
+            headers={"Content-Disposition": f"attachment; filename=complete_news_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+
 @app.get("/", include_in_schema=False)
 def root():
     return {"message": "Welcome to the News Analysis API! See /docs for Swagger UI."}
@@ -384,6 +1001,96 @@ def get_snapshot_day(date: str):
             return json.loads(snapshot.data)
         else:
             raise HTTPException(status_code=404, detail="No snapshot found for this day.")
+    finally:
+        db.close()
+
+@app.get("/snapshots/rolling-week/{date}", summary="Get rolling 7-day period ending on date (YYYY-MM-DD)")
+def get_rolling_week(date: str):
+    """Get aggregated data for the past 7 days ending on the specified date"""
+    db = SessionLocal()
+    try:
+        from datetime import datetime as dt, timedelta
+        
+        # Parse the end date
+        end_date = dt.strptime(date, '%Y-%m-%d').date()
+        start_date = end_date - timedelta(days=6)  # 7 days total including end_date
+        
+        # Get all snapshots in the rolling 7-day period
+        all_snapshots = db.query(Snapshot).filter(
+            Snapshot.date >= start_date, 
+            Snapshot.date <= end_date, 
+            Snapshot.period_type == 'day'
+        ).all()
+        
+        if not all_snapshots:
+            raise HTTPException(status_code=404, detail="No snapshots found for this 7-day period.")
+        
+        # Aggregate data from all snapshots in the period
+        aggregated_keywords = {}
+        aggregated_source_counts = {}
+        aggregated_source_sentiments = {}
+        all_articles = []
+        all_temporal_trends = {}
+        
+        for snapshot in all_snapshots:
+            snapshot_data = json.loads(snapshot.data)
+            
+            # Aggregate keywords
+            if 'top_keywords' in snapshot_data:
+                for keyword, count in snapshot_data['top_keywords'].items():
+                    aggregated_keywords[keyword] = aggregated_keywords.get(keyword, 0) + count
+            
+            # Aggregate source trends
+            if 'source_trends' in snapshot_data:
+                if 'article_counts' in snapshot_data['source_trends']:
+                    for source, count in snapshot_data['source_trends']['article_counts'].items():
+                        aggregated_source_counts[source] = aggregated_source_counts.get(source, 0) + count
+                
+                if 'sentiment_by_source' in snapshot_data['source_trends']:
+                    for source, sentiment in snapshot_data['source_trends']['sentiment_by_source'].items():
+                        if source not in aggregated_source_sentiments:
+                            aggregated_source_sentiments[source] = []
+                        aggregated_source_sentiments[source].append(sentiment)
+            
+            # Collect articles
+            if 'articles' in snapshot_data:
+                all_articles.extend(snapshot_data['articles'])
+            
+            # Collect temporal trends
+            if 'temporal_trends' in snapshot_data:
+                all_temporal_trends.update(snapshot_data['temporal_trends'])
+        
+        # Calculate average sentiment by source
+        for source in aggregated_source_sentiments:
+            if aggregated_source_sentiments[source]:
+                aggregated_source_sentiments[source] = sum(aggregated_source_sentiments[source]) / len(aggregated_source_sentiments[source])
+        
+        # Sort keywords by count - show more keywords for longer periods
+        sorted_keywords = dict(sorted(aggregated_keywords.items(), key=lambda x: x[1], reverse=True)[:20])
+        
+        aggregated_result = {
+            "message": f"News analysis for rolling 7-day period ending {date}",
+            "top_keywords": sorted_keywords,
+            "source_trends": {
+                'article_counts': aggregated_source_counts,
+                'sentiment_by_source': aggregated_source_sentiments
+            },
+            "temporal_trends": all_temporal_trends,
+            "plot_files": [
+                "trend_plots/sentiment_by_source.png",
+                "trend_plots/source_distribution.png", 
+                "trend_plots/temporal_trends.png",
+                "trend_plots/wordcloud.png"
+            ],
+            "articles": all_articles
+        }
+        
+        return aggregated_result
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving rolling week data: {str(e)}")
     finally:
         db.close()
 
@@ -454,7 +1161,7 @@ def get_snapshot_week(year_week: str = Path(..., description="Format: YYYY-WW, e
                 aggregated_source_sentiments[source] = sum(aggregated_source_sentiments[source]) / len(aggregated_source_sentiments[source])
         
         # Sort keywords by count
-        sorted_keywords = dict(sorted(aggregated_keywords.items(), key=lambda x: x[1], reverse=True)[:10])
+        sorted_keywords = dict(sorted(aggregated_keywords.items(), key=lambda x: x[1], reverse=True)[:20])
         
         aggregated_result = {
             "message": f"News analysis for week {year_week}",
@@ -474,6 +1181,96 @@ def get_snapshot_week(year_week: str = Path(..., description="Format: YYYY-WW, e
         }
         
         return aggregated_result
+    finally:
+        db.close()
+
+@app.get("/snapshots/rolling-month/{date}", summary="Get rolling 30-day period ending on date (YYYY-MM-DD)")
+def get_rolling_month(date: str):
+    """Get aggregated data for the past 30 days ending on the specified date"""
+    db = SessionLocal()
+    try:
+        from datetime import datetime as dt, timedelta
+        
+        # Parse the end date
+        end_date = dt.strptime(date, '%Y-%m-%d').date()
+        start_date = end_date - timedelta(days=29)  # 30 days total including end_date
+        
+        # Get all snapshots in the rolling 30-day period
+        all_snapshots = db.query(Snapshot).filter(
+            Snapshot.date >= start_date, 
+            Snapshot.date <= end_date, 
+            Snapshot.period_type == 'day'
+        ).all()
+        
+        if not all_snapshots:
+            raise HTTPException(status_code=404, detail="No snapshots found for this 30-day period.")
+        
+        # Aggregate data from all snapshots in the period
+        aggregated_keywords = {}
+        aggregated_source_counts = {}
+        aggregated_source_sentiments = {}
+        all_articles = []
+        all_temporal_trends = {}
+        
+        for snapshot in all_snapshots:
+            snapshot_data = json.loads(snapshot.data)
+            
+            # Aggregate keywords
+            if 'top_keywords' in snapshot_data:
+                for keyword, count in snapshot_data['top_keywords'].items():
+                    aggregated_keywords[keyword] = aggregated_keywords.get(keyword, 0) + count
+            
+            # Aggregate source trends
+            if 'source_trends' in snapshot_data:
+                if 'article_counts' in snapshot_data['source_trends']:
+                    for source, count in snapshot_data['source_trends']['article_counts'].items():
+                        aggregated_source_counts[source] = aggregated_source_counts.get(source, 0) + count
+                
+                if 'sentiment_by_source' in snapshot_data['source_trends']:
+                    for source, sentiment in snapshot_data['source_trends']['sentiment_by_source'].items():
+                        if source not in aggregated_source_sentiments:
+                            aggregated_source_sentiments[source] = []
+                        aggregated_source_sentiments[source].append(sentiment)
+            
+            # Collect articles
+            if 'articles' in snapshot_data:
+                all_articles.extend(snapshot_data['articles'])
+            
+            # Collect temporal trends
+            if 'temporal_trends' in snapshot_data:
+                all_temporal_trends.update(snapshot_data['temporal_trends'])
+        
+        # Calculate average sentiment by source
+        for source in aggregated_source_sentiments:
+            if aggregated_source_sentiments[source]:
+                aggregated_source_sentiments[source] = sum(aggregated_source_sentiments[source]) / len(aggregated_source_sentiments[source])
+        
+        # Sort keywords by count - show more keywords for longer periods
+        sorted_keywords = dict(sorted(aggregated_keywords.items(), key=lambda x: x[1], reverse=True)[:30])
+        
+        aggregated_result = {
+            "message": f"News analysis for rolling 30-day period ending {date}",
+            "top_keywords": sorted_keywords,
+            "source_trends": {
+                'article_counts': aggregated_source_counts,
+                'sentiment_by_source': aggregated_source_sentiments
+            },
+            "temporal_trends": all_temporal_trends,
+            "plot_files": [
+                "trend_plots/sentiment_by_source.png",
+                "trend_plots/source_distribution.png", 
+                "trend_plots/temporal_trends.png",
+                "trend_plots/wordcloud.png"
+            ],
+            "articles": all_articles
+        }
+        
+        return aggregated_result
+        
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving rolling month data: {str(e)}")
     finally:
         db.close()
 
@@ -534,7 +1331,7 @@ def get_snapshot_month(year_month: str = Path(..., description="Format: YYYY-MM,
                 aggregated_source_sentiments[source] = sum(aggregated_source_sentiments[source]) / len(aggregated_source_sentiments[source])
         
         # Sort keywords by count
-        sorted_keywords = dict(sorted(aggregated_keywords.items(), key=lambda x: x[1], reverse=True)[:10])
+        sorted_keywords = dict(sorted(aggregated_keywords.items(), key=lambda x: x[1], reverse=True)[:20])
         
         aggregated_result = {
             "message": f"News analysis for month {year_month}",
@@ -690,7 +1487,7 @@ def generate_weekly_snapshot():
             source_sentiments[src] /= 7
         weekly_data = {
             "message": f"Weekly news analysis for {week_start} to {today}",
-            "top_keywords": dict(sorted(keywords.items(), key=lambda x: -x[1])[:10]),
+            "top_keywords": dict(sorted(keywords.items(), key=lambda x: -x[1])[:20]),
             "source_trends": {
                 "article_counts": source_counts,
                 "sentiment_by_source": source_sentiments
@@ -1052,7 +1849,7 @@ def generate_weekly_summary(db):
     
     # Top trending topics
     if "top_keywords" in data and data["top_keywords"]:
-        top_keywords = list(data["top_keywords"].keys())[:10]
+        top_keywords = list(data["top_keywords"].keys())[:20]
         lines.append("🔥 TOP TRENDING TOPICS:")
         lines.append(", ".join(top_keywords))
         lines.append("")
@@ -1084,7 +1881,7 @@ def generate_weekly_summary(db):
             lines.append("")
     
     # Generate realistic articles based on trending topics
-    top_keywords = list(data.get("top_keywords", {}).keys())[:10] if data.get("top_keywords") else []
+    top_keywords = list(data.get("top_keywords", {}).keys())[:20] if data.get("top_keywords") else []
     sources = list(data.get("source_trends", {}).get("article_counts", {}).keys())[:5] if data.get("source_trends", {}).get("article_counts") else []
     
     if top_keywords:
